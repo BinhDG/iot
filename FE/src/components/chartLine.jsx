@@ -52,7 +52,7 @@ const RealtimeChart = ({temp, humiditi,lights,timestamp}) => {
     return lab;
   })
 
-  }, [temp, humiditi.lights, timestamp]);
+  }, [temp, humiditi, lights, timestamp]);
 
   const data = {
     labels,

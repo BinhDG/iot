@@ -1,9 +1,18 @@
-const mongoose= require("mongoose");
-const historySchema= new mongoose.Schema({
-    device:String,
-    action:String,
-},{
-    timestamps:true 
+const { DataTypes } = require('sequelize');
+const sequelize = require('../db');
+
+const History = sequelize.define('history', {
+    device: {
+        type: DataTypes.STRING,
+        allowNull: true
+    },
+    action: {
+        type: DataTypes.STRING,
+        allowNull: true
+    }
+}, {
+    tableName: 'history',
+    timestamps: true 
 });
-const historyModel= mongoose.model("history", historySchema,"history");
-module.exports= historyModel;
+
+module.exports = History;

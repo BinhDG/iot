@@ -1,10 +1,22 @@
-const mongoose= require("mongoose")
-const dataSchema= new mongoose.Schema({
-    temperature: Number,
-    humidity:Number,
-    light: Number,
-},{
-    timestamps:true
+const { DataTypes } = require('sequelize');
+const sequelize = require('../db');
+
+const DataSensor = sequelize.define('dataSensor', {
+    temperature: {
+        type: DataTypes.FLOAT,
+        allowNull: true
+    },
+    humidity: {
+        type: DataTypes.FLOAT,
+        allowNull: true
+    },
+    light: {
+        type: DataTypes.FLOAT,
+        allowNull: true
+    }
+}, {
+    tableName: 'data_sensors',
+    timestamps: true 
 });
-const dataModel= mongoose.model("dataSensor", dataSchema,"dataSensor");
-module.exports= dataModel;
+
+module.exports = DataSensor;

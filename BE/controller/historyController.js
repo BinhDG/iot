@@ -1,60 +1,79 @@
 const History = require('../model/History');
-const moment= require('moment');
-const configTime= require('../time');
-module.exports.getHistory = async (req,res)=>{
+const moment = require('moment');
+const configTime = require('../time');
+const { Op } = require('sequelize');
+
+module.exports.getHistory = async (req, res) => {
     try {
-        const {page,filter,keyword,sortKey,sortValue, frequent,filterStatus}= req.query;
-        let find={};
-        let limit= frequent ? frequent : 10;
-        let sort={};
-    // Sort
-        if(sortKey && sortValue) sort[sortKey]= parseInt(sortValue)
-        else sort['createdAt']= -1;
-    
-    // Filter
-        if(filter){
-            find.device=filter;
+        const { page, filter, keyword, sortKey, sortValue, frequent, filterStatus } = req.query;
+        let limit = frequent ? parseInt(frequent) : 10;
+        let where = {};
+        let order = [];
+
+        // Sort
+        if (sortKey && sortValue) {
+            order.push([sortKey, parseInt(sortValue) === 1 ? 'ASC' : 'DESC']);
+        } else {
+            order.push(['createdAt', 'DESC']);
         }
-        if(filterStatus){
-            find.action= filterStatus;
+
+        // Filter
+        if (filter) {
+            where.device = filter;
         }
-    // search
-        if(keyword){
-            const {start,end}= configTime(keyword);
-            find.createdAt={
-                $gte: start,
-                $lte: end
-            }
+        if (filterStatus) {
+            where.action = filterStatus;
         }
-    // Pagination
-    const totalDoc= await History.countDocuments(find);
-    const skipPage= (page-1)*limit;
-    const totalPage= Math.ceil(totalDoc/limit);
-    // Query DB
-        let history= await History.find(find).skip(skipPage).limit(limit).sort(sort).lean();
-        history.forEach(item=>{
-            item.createdAt= moment(item.createdAt).format('HH:mm:ss DD/MM/YYYY');
-        })
+
+        // Search
+        if (keyword) {
+            const { start, end } = configTime(keyword);
+            where.createdAt = {
+                [Op.between]: [start, end]
+            };
+        }
+
+        const skipPage = page ? (parseInt(page) - 1) * limit : 0;
+
+        // Query DB
+        const { count, rows } = await History.findAndCountAll({
+            where: where,
+            offset: skipPage,
+            limit: limit,
+            order: order,
+            raw: true
+        });
+
+        let history = rows.map(item => {
+            item.createdAt = moment(item.createdAt).format('HH:mm:ss DD/MM/YYYY');
+            return item;
+        });
+
         res.status(200).json({
-            doc:history,
-            totalPage:totalPage,
-            currentPage: page ? parseInt(page) :1
+            doc: history,
+            totalPage: Math.ceil(count / limit),
+            currentPage: page ? parseInt(page) : 1
         });
     } catch (error) {
-        console.log(error)
+        console.log(error);
+        res.status(500).json({ message: "Internal server error" });
     }
 }
 
-module.exports.getLedStatus= async (req,res)=>{
+module.exports.getLedStatus = async (req, res) => {
     try {
-        const arr=["led1","led2","led3"];
-        let arr1=[]
-        for( i in arr){
-            const latestData= await History.findOne({device:arr[i]}).sort({createdAt:-1}).lean();
+        const arr = ["led1", "led2", "led3"];
+        let arr1 = [];
+        for (let i in arr) {
+            const latestData = await History.findOne({
+                where: { device: arr[i] },
+                order: [['createdAt', 'DESC']],
+                raw: true
+            });
             arr1.push({
                 device: arr[i],
                 status: latestData ? latestData.action : "OFF"
-            })
+            });
         }
         res.status(200).json(arr1);
     } catch (error) {

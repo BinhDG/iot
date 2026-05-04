@@ -1,139 +1,85 @@
-const express= require('express');
-const mqtt= require('mqtt');
-const {createServer} = require('http');
-const {Server }= require('socket.io');
-const app= express();
-const cors= require('cors');
-const httpServer= createServer(app);
-const route= require('./route');
-const dataSensor= require("./model/dataSensor");
-const History= require("./model/History");
-const { default: mongoose } = require('mongoose');
+const express = require('express');
+const mqtt = require('mqtt');
+const { createServer } = require('http');
+const { Server } = require('socket.io');
+const cors = require('cors');
+const app = express();
+const httpServer = createServer(app);
+const route = require('./route');
+const sequelize = require('./db');
 
-const io= new Server(httpServer, {
-    cors:{
-        origin:"*"
-    }
+const DataSensor = require("./model/dataSensor");
+const History = require("./model/History");
+
+const io = new Server(httpServer, {
+    cors: { origin: "*" }
 });
+
 app.use(cors());
-const mqttUrl= "mqtt:// 192.168.244.129:1883";
-const user='tripled'
-const password= '842004'
-const mqttClient= mqtt.connect(mqttUrl,{
-    username: user,
-    password: password  
+app.use(express.json());
+
+const mqttClient = mqtt.connect("mqtt://127.0.0.1:1884", {
+    username: 'tripled',
+    password: '842004'  
 });
 
-// Connect to Database
-mongoose.connect("mongodb://localhost:27017/iot")
-.then(()=>{
-    console.log('Connected to MongoDB');
-})
-.catch(err=>{
-    console.log('Failed to connect to MongoDB', err);
-})
-// Route
-route(app);
-// Connect to Socket
-io.on('connection',(socket)=>{
-    console.log('Connetted client');
-    socket.on('ledReq',(data)=>{
-        let topic= `home/${data.name}`
-        let msg= data.status ? "ON":"OFF";
-        mqttClient.publish(topic,msg, err=>{
-            if (err){
-                console.log('Failed to publish message', err);
-            }
-        });
+sequelize.authenticate()
+    .then(() => {
+        console.log('Connected to MySQL');
+        return sequelize.sync();
     })
-    // socket.emit('dataSensor',{
-    //     temperature: 25.5,
-    //     humidity: 52,
-    //     light: 3
-    // })
+    .catch(err => console.log('Database Error:', err));
+
+io.on('connection', (socket) => {
+    console.log('Client connected to Dashboard');
+    
+    // Nhận lệnh điều khiển đèn từ Web
+    socket.on('ledReq', (data) => {
+        let topic = `home/${data.name}`;
+        let msg = data.status ? "ON" : "OFF";
+        mqttClient.publish(topic, msg);
+    });
 });
 
-mqttClient.on('connect',()=>{
-    console.log('Connected to MQTT broker');
-    mqttClient.subscribe('home/sensor',(err)=>{
-        if(!err){
-            console.log('Subscribed to topic home/sensor');
-        }else{
-            console.error('Failed to subscribe:', err);
-        }
-    })
-    mqttClient.subscribe('home/ledStatus',(err)=>{
-        if(!err){
-            console.log('Subscribed to topic home/ledStatus');
-        }else{
-            console.error('Failed to subscribe:', err);
-        }
-    })
-    mqttClient.subscribe("home/status");
-})
-mqttClient.on('message',async (topic,message)=>{
-    if(topic=="home/status"){
-        const msg= message.toString();
-        if(msg=="ON") console.log("System is ON");
-        else{
-            let devices= ["led1","led2","led3"];
-            for(let i in devices){
-                const led= await History.findOne({device: devices[i]}).sort({createdAt: -1});
-                if(led.action=="ON"){
-                const record= new History({
-                    device: devices[i],
-                    action: "OFF"
-                })
-                await record.save();
-            }}
-            io.emit('ledStatus',{
-                name: "all",
-                msg: 0
-            })
-        }
-    }
-    if(topic == "home/sensor"){
-        // Lưu DB
-        const tmpData= JSON.parse(message.toString());
+mqttClient.on('connect', () => {
+    mqttClient.subscribe(['home/sensor', 'home/ledStatus', 'home/status']);
+    console.log('Subscribed to MQTT topics');
+});
+
+mqttClient.on('message', async (topic, message) => {
+    const msgString = message.toString();
+
+    if (topic === "home/sensor") {
         try {
-            const record= new dataSensor({
+            const tmpData = JSON.parse(msgString);
+            await DataSensor.create({
                 temperature: tmpData.temperature,
-                light: tmpData.light,
-                humidity: tmpData.humidity  
+                humidity: tmpData.humidity,
+                light: tmpData.light
             });
-            await record.save();
-        } catch (error) {
-            console.log(error);
-        }
-        // Gửi msg đi
-        io.emit('dataSensor', tmpData);
+            io.emit('dataSensor', tmpData);
+        } catch (e) { console.log("Sensor Error:", e); }
     }
-    if(topic == "home/ledStatus"){
-        // Lưu DB
+    
+    if (topic === "home/ledStatus") {
         try {
-            const tmpLed=JSON.parse(message.toString());
-            let keyLed="";
-            let valueLed=0;
-            for(key in tmpLed){
-                keyLed= key;
-                valueLed= tmpLed[key];
-                break;
-            }
-            const record= new History({
+            const tmpLed = JSON.parse(msgString);
+            let keyLed = Object.keys(tmpLed)[0];
+            let valueLed = tmpLed[keyLed];
+            
+            await History.create({
                 device: keyLed,
-                action: valueLed == 1 ? "ON":"OFF"
+                action: valueLed == 1 ? "ON" : "OFF"
             });
-            await record.save();
-            io.emit('ledStatus',{
+            
+            // Gửi 'status' (true/false) về cho Frontend
+            io.emit('ledStatus', {
                 name: keyLed,
-                msg: 1
-            })
-        } catch (error) {
-            console.log(error);
-        }
+                status: valueLed == 1
+            });
+        } catch (e) { console.log("LED Status Error:", e); }
     }
 });
 
-httpServer.listen(3000,()=>{
-    console.log('Server is running on port 3000');
-})
+route(app);
+httpServer.listen(3000, () => console.log('Backend running on port 3000'));
