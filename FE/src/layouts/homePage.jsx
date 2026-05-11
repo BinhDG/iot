@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import * as Chart from 'chart.js';
-import {io} from 'socket.io-client';
-import ChartTmp from "../components/chartLine"
+import { io } from 'socket.io-client';
+import ChartTmp from "../components/chartLine";
 import NavBar from '../components/navbar';
 import '../assets/SmartHomeDashboard.scss';
 
@@ -10,32 +9,30 @@ const socket = io("http://localhost:3000");
 const SmartHomeDashboard = () => {
   const [devices, setDevices] = useState(() => {
     const localS = localStorage.getItem("deviceStatus");
-    return localS ? JSON.parse(localS) :
-    {
+    const initial = localS ? JSON.parse(localS) : {
       led1: { status: false },
       led2: { status: false },
       led3: { status: false }
+    };
+    return {
+      led1: { ...initial.led1, isWaiting: false },
+      led2: { ...initial.led2, isWaiting: false },
+      led3: { ...initial.led3, isWaiting: false }
     };
   });
 
   const [temperature, setTemperature] = useState('');
   const [humidity, setHumidity] = useState('');
   const [light, setLight] = useState('');
-  const [loading, setLoading] = useState(false);
   const [timestamp, setTimestamp] = useState('');
 
-  // Giữ nguyên các hàm bổ trợ giao diện của bạn
-  const toggleDevice = (deviceName) => {
-    setDevices(prev => ({
-      ...prev,
-      [deviceName]: {
-        ...prev[deviceName],
-        status: !prev[deviceName].status
-      }
-    }));
-  };
+  const timers = useRef({
+    led1: null,
+    led2: null,
+    led3: null
+  });
 
-  const StatCard = ({ icon, label, value, unit, color, trend, className }) => (
+  const StatCard = ({ icon, label, value, unit, color, className }) => (
     <div className="stat-card" style={{ borderLeft: `4px solid ${color}` }}>
       <div className="stat-header">
         <span className="stat-icon" style={{ color }}>{icon}</span>
@@ -47,26 +44,47 @@ const SmartHomeDashboard = () => {
     </div>
   );
 
-  const DeviceCard = ({ device, name, icon, title, isActive, onToggle, children }) => (
-    <div className={`device-card ${isActive ? 'active' : ''}`}>
+  const DeviceCard = ({ name, icon, title, isActive, isWaiting }) => (
+    <div className={`device-card ${isActive ? 'active' : ''} ${isWaiting ? 'waiting' : ''}`}>
       <div className="device-header">
         <div className="device-info">
           <span className="device-icon">{icon}</span>
           <span className="device-title">{title}</span>
         </div>
         <label className="switch">
-          <input type="checkbox" checked={isActive} onChange={() => {
-            socket.emit("ledReq", {
-              name: name,
-              status: !isActive
-            });
-          }} />
+          <input 
+            type="checkbox" 
+            checked={isActive} 
+            disabled={isWaiting} 
+            onChange={() => handleToggle(name, isActive)} 
+          />
           <span className="slider round"></span>
         </label>
       </div>
-      {children && <div className="device-controls">{children}</div>}
     </div>
   );
+
+  const handleToggle = (name, currentStatus) => {
+    // Bật trạng thái waiting màu cam ngay lập tức
+    setDevices(prev => ({
+      ...prev,
+      [name]: { ...prev[name], isWaiting: true }
+    }));
+
+    socket.emit("ledReq", {
+      name: name,
+      status: !currentStatus
+    });
+
+    if (timers.current[name]) clearTimeout(timers.current[name]);
+    timers.current[name] = setTimeout(() => {
+      setDevices(prev => ({
+        ...prev,
+        [name]: { ...prev[name], isWaiting: false }
+      }));
+      alert(`Lỗi: Thiết bị ${name} không phản hồi!`);
+    }, 10000);
+  };
 
   const getStatusClass = (type, value) => {
     if (type === "temperature") {
@@ -93,7 +111,6 @@ const SmartHomeDashboard = () => {
     return "";
   };
 
-  // 1. Lắng nghe dữ liệu cảm biến[cite: 10]
   useEffect(() => {
     socket.on("dataSensor", (data) => {
       setHumidity(data.humidity);
@@ -104,24 +121,26 @@ const SmartHomeDashboard = () => {
     return () => socket.off("dataSensor");
   }, []);
 
-  // 2. PHẦN SỬA LỖI: Lắng nghe phản hồi trạng thái đèn
   useEffect(() => {
     socket.on("ledStatus", (data) => {
-      // Backend gửi 'status' thay vì 'msg'[cite: 9]
-      // Chỉ cập nhật thiết bị cụ thể, không reset toàn bộ[cite: 10]
       if (data.name && data.name !== "all") {
+        if (timers.current[data.name]) {
+          clearTimeout(timers.current[data.name]);
+          timers.current[data.name] = null;
+        }
+
         setDevices(prev => ({
           ...prev,
           [data.name]: {
-            status: data.status // Cập nhật đúng trạng thái true/false từ mạch[cite: 9]
+            status: data.status,
+            isWaiting: false 
           }
         }));
       } else if (data.name === "all") {
-        // Chỉ reset tất cả khi nhận lệnh "all" từ hệ thống[cite: 9]
         setDevices({
-          led1: { status: false },
-          led2: { status: false },
-          led3: { status: false }
+          led1: { status: false, isWaiting: false },
+          led2: { status: false, isWaiting: false },
+          led3: { status: false, isWaiting: false }
         });
       }
     });
@@ -177,14 +196,17 @@ const SmartHomeDashboard = () => {
             <DeviceCard
               name="led1" icon="💡" title="Đèn 1"
               isActive={devices.led1.status}
+              isWaiting={devices.led1.isWaiting}
             />
             <DeviceCard
               name="led2" icon="💡" title="Đèn 2"
               isActive={devices.led2.status}
+              isWaiting={devices.led2.isWaiting}
             />
             <DeviceCard
               name="led3" icon="💡" title="Đèn 3"
               isActive={devices.led3.status}
+              isWaiting={devices.led3.isWaiting}
             />
           </div>
         </div>

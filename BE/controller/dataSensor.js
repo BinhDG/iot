@@ -17,30 +17,39 @@ module.exports.getData = async (req, res) => {
             order.push(['createdAt', 'DESC']);
         }
 
-        // 2. Tìm kiếm và Lọc
-        if (filter && keyword && keyword.trim() !== "") {
+        // 2. Xử lý logic tìm kiếm
+        if (keyword && keyword.trim() !== "") {
             keyword = keyword.trim();
 
             if (filter === "all") {
+                // Điều kiện tìm kiếm cho các cột dữ liệu số (Cần CAST về CHAR để dùng LIKE)
                 let orConditions = [
                     Sequelize.where(Sequelize.cast(Sequelize.col('temperature'), 'CHAR'), { [Op.like]: `%${keyword}%` }),
                     Sequelize.where(Sequelize.cast(Sequelize.col('humidity'), 'CHAR'), { [Op.like]: `%${keyword}%` }),
                     Sequelize.where(Sequelize.cast(Sequelize.col('light'), 'CHAR'), { [Op.like]: `%${keyword}%` })
                 ];
-                
+
+                // Kiểm tra xem keyword có phải định dạng thời gian linh hoạt không
                 const timeRange = configTime(keyword);
-                if (timeRange && timeRange.start && timeRange.end) {
+                if (timeRange) {
                     orConditions.push({
                         createdAt: { [Op.between]: [timeRange.start, timeRange.end] }
                     });
                 }
+                
                 where[Op.or] = orConditions;
-            } else if (filter === "createdAt") {
+            } 
+            else if (filter === "createdAt") {
                 const timeRange = configTime(keyword);
-                if (timeRange && timeRange.start && timeRange.end) {
+                if (timeRange) {
                     where.createdAt = { [Op.between]: [timeRange.start, timeRange.end] };
+                } else {
+                    // Nếu gõ ngày sai định dạng khi đang chọn lọc theo thời gian
+                    where.id = null; 
                 }
-            } else {
+            } 
+            else {
+                // Lọc theo từng cột cụ thể (temperature, humidity, light)
                 where = Sequelize.where(Sequelize.cast(Sequelize.col(filter), 'CHAR'), { [Op.like]: `%${keyword}%` });
             }
         }
@@ -54,6 +63,7 @@ module.exports.getData = async (req, res) => {
             raw: true
         });
 
+        // Định dạng lại thời gian hiển thị cho Frontend
         let data = rows.map(item => {
             item.createdAt = moment(item.createdAt).format("HH:mm:ss DD/MM/YYYY");
             return item;

@@ -8,6 +8,7 @@ const httpServer = createServer(app);
 const route = require('./route');
 const sequelize = require('./db');
 
+// Import các model
 const DataSensor = require("./model/dataSensor");
 const History = require("./model/History");
 
@@ -18,6 +19,7 @@ const io = new Server(httpServer, {
 app.use(cors());
 app.use(express.json());
 
+// 1. Kết nối MQTT Broker
 const mqttClient = mqtt.connect("mqtt://127.0.0.1:1884", {
     username: 'tripled',
     password: '842004'  
@@ -30,25 +32,31 @@ sequelize.authenticate()
     })
     .catch(err => console.log('Database Error:', err));
 
+// 2. Socket.io: Lắng nghe lệnh từ Web
 io.on('connection', (socket) => {
-    console.log('Client connected to Dashboard');
-    
-    // Nhận lệnh điều khiển đèn từ Web
     socket.on('ledReq', (data) => {
-        let topic = `home/${data.name}`;
+        let topic = `home/${data.name}`; 
         let msg = data.status ? "ON" : "OFF";
-        mqttClient.publish(topic, msg);
+        
+        setTimeout(() => {
+            mqttClient.publish(topic, msg, (err) => {
+                if (err) console.error('Lỗi gửi lệnh tới ESP32:', err);
+                else console.log(`Đã gửi lệnh ${msg} tới ${data.name} sau 0.5 giây.`);
+            });
+        }, 500); 
     });
 });
 
+// 3. MQTT: Lắng nghe tin nhắn từ Broker
 mqttClient.on('connect', () => {
     mqttClient.subscribe(['home/sensor', 'home/ledStatus', 'home/status']);
-    console.log('Subscribed to MQTT topics');
+    console.log('Đã đăng ký các topic MQTT');
 });
 
 mqttClient.on('message', async (topic, message) => {
     const msgString = message.toString();
 
+    // Dữ liệu cảm biến (Gửi ngay lập tức)
     if (topic === "home/sensor") {
         try {
             const tmpData = JSON.parse(msgString);
@@ -57,27 +65,33 @@ mqttClient.on('message', async (topic, message) => {
                 humidity: tmpData.humidity,
                 light: tmpData.light
             });
-            io.emit('dataSensor', tmpData);
-        } catch (e) { console.log("Sensor Error:", e); }
+            io.emit('dataSensor', tmpData); 
+        } catch (error) {
+            console.error("Lỗi cảm biến:", error);
+        }
     }
     
+    // Phản hồi trạng thái đèn từ mạch
     if (topic === "home/ledStatus") {
         try {
             const tmpLed = JSON.parse(msgString);
-            let keyLed = Object.keys(tmpLed)[0];
+            let keyLed = Object.keys(tmpLed)[0]; 
             let valueLed = tmpLed[keyLed];
             
+            // Lưu lịch sử
             await History.create({
                 device: keyLed,
                 action: valueLed == 1 ? "ON" : "OFF"
             });
             
-            // Gửi 'status' (true/false) về cho Frontend
+            // Báo về Web ngay sau khi mạch phản hồi để tắt màu cam
             io.emit('ledStatus', {
                 name: keyLed,
                 status: valueLed == 1
             });
-        } catch (e) { console.log("LED Status Error:", e); }
+        } catch (error) {
+            console.error("Lỗi phản hồi đèn:", error);
+        }
     }
 });
 
